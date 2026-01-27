@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Slow Elastic Wallpaper</title>
+    <style>
+        body, html {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background-color: black;
+        }
+
+        .goo-container {
+            width: 100%;
+            height: 100%;
+            background: black;
+            filter: blur(80px) contrast(140%);
+            animation: fadeIn 6s ease-in forwards;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+
+        canvas {
+            display: block;
+        }
+    </style>
+</head>
+<body>
+
+<div class="goo-container">
+    <canvas id="canvas"></canvas>
+</div>
+
+<script>
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
+
+    let width, height, blobs, ghostBlobs;
+
+    const BASE_BLOB_COUNT = 12;
+    
+    class Blob {
+        constructor(isGhost = false) {
+            this.isGhost = isGhost;
+            this.init();
+        }
+
+        init() {
+            this.width = window.innerWidth;
+            this.height = window.innerHeight;
+            this.x = Math.random() * width;
+            this.y = Math.random() * height;
+            this.radius = Math.random() * 150 + 100;
+            
+            // Speed reduced by ~15% (1.2 * 0.85 = 1.02)
+            this.speedX = (Math.random() - 0.5) * 1.02;
+            this.speedY = (Math.random() - 0.5) * 1.02;
+            
+            this.hue = Math.random() * 360;
+            this.opacity = this.isGhost ? 0 : 0.7;
+            this.life = this.isGhost ? 0 : 1; 
+
+            // Spawn rate reduced to increase lifetime (0.005 / 1.15 ≈ 0.0043)
+            this.spawnRate = 0.0043; 
+        }
+
+        update() {
+            this.x += this.speedX;
+            this.y += this.speedY;
+
+            // Subtle color shift
+            this.hue += 0.15;
+
+            if (this.x < -this.radius) this.x = width + this.radius;
+            if (this.x > width + this.radius) this.x = -this.radius;
+            if (this.y < -this.radius) this.y = height + this.radius;
+            if (this.y > height + this.radius) this.y = -this.radius;
+
+            if (this.isGhost) {
+                this.life += this.spawnRate;
+                // Using sine for a very smooth fade in/out
+                this.opacity = Math.sin(this.life) * 0.6;
+                if (this.life > Math.PI) {
+                    this.init(); 
+                }
+            }
+        }
+
+        draw() {
+            if (this.opacity <= 0) return;
+            ctx.beginPath();
+            ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+            ctx.fillStyle = `hsla(${this.hue}, 55%, 35%, ${this.opacity})`;
+            ctx.fill();
+        }
+    }
+
+    function resize() {
+        width = canvas.width = window.innerWidth;
+        height = canvas.height = window.innerHeight;
+        initBlobs();
+    }
+
+    function initBlobs() {
+        blobs = [];
+        ghostBlobs = [];
+        for (let i = 0; i < BASE_BLOB_COUNT; i++) {
+            blobs.push(new Blob(false));
+        }
+        for (let i = 0; i < 4; i++) {
+            ghostBlobs.push(new Blob(true));
+        }
+    }
+
+    function animate() {
+        ctx.clearRect(0, 0, width, height);
+        
+        blobs.forEach(blob => {
+            blob.update();
+            blob.draw();
+        });
+
+        ghostBlobs.forEach(ghost => {
+            ghost.update();
+            ghost.draw();
+        });
+
+        requestAnimationFrame(animate);
+    }
+
+    window.addEventListener('resize', resize);
+    resize();
+    animate();
+</script>
+
+</body>
+</html>
