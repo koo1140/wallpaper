@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Burst Elastic Wallpaper</title>
+    <style>
+        body, html {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background-color: black;
+            user-select: none;
+        }
+
+        .goo-container {
+            width: 100%;
+            height: 100%;
+            background: black;
+            filter: blur(80px) contrast(145%);
+            animation: fadeIn 4s ease-in forwards;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+
+        canvas {
+            display: block;
+            /* Removed custom cursor icon to keep normal system cursor */
+        }
+    </style>
+</head>
+<body>
+
+<div class="goo-container">
+    <canvas id="canvas"></canvas>
+</div>
+
+<script>
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
+
+    let width, height, blobs, ghostBlobs;
+    let mouse = { x: -1000, y: -1000, active: false };
+
+    const BASE_BLOB_COUNT = 15;
+    
+    class Blob {
+        constructor(isGhost = false, isWakeUp = false) {
+            this.isGhost = isGhost;
+            this.isWakeUp = isWakeUp;
+            this.isAttracting = false;
+            this.isBursting = false;
+            this.init();
+        }
+
+        init() {
+            width = window.innerWidth;
+            height = window.innerHeight;
+            
+            this.targetRadius = Math.random() * 100 + 90;
+            this.hue = Math.random() * 360;
+            this.opacity = this.isGhost ? 0 : 0.75;
+            this.life = this.isGhost ? 0 : 1; 
+            this.spawnRate = 0.004; 
+
+            // Base wandering speeds to return to after a burst
+            this.baseSpeedX = (Math.random() - 0.5) * 1.02;
+            this.baseSpeedY = (Math.random() - 0.5) * 1.02;
+
+            if (this.isWakeUp) {
+                this.radius = Math.random() * 60 + 200; 
+                this.x = width / 2;
+                this.y = height + this.radius + 100;
+                this.upSpeed = 0.6 + Math.random() * 0.9;
+                this.swayOffset = Math.random() * Math.PI * 2;
+                this.swayFreq = 0.004 + Math.random() * 0.003;
+                this.swayAmp = 30 + Math.random() * 40; 
+                this.drift = (Math.random() - 0.5) * 0.5;
+                this.saturation = 75; 
+            } else {
+                this.radius = this.targetRadius;
+                this.x = Math.random() * width;
+                this.y = Math.random() * height;
+                this.speedX = this.baseSpeedX;
+                this.speedY = this.baseSpeedY;
+                this.saturation = 55;
+            }
+        }
+
+        burst(originX, originY) {
+            this.isWakeUp = false;
+            this.isAttracting = false;
+            this.isBursting = true;
+            
+            const angle = Math.atan2(this.y - originY, this.x - originX);
+            const force = 18 + Math.random() * 22;
+            this.speedX = Math.cos(angle) * force;
+            this.speedY = Math.sin(angle) * force;
+        }
+
+        update() {
+            // INTERACTION: MOUSE ATTRACTION
+            if (mouse.active && !this.isGhost) {
+                this.isAttracting = true;
+                this.isWakeUp = false;
+                
+                const dx = mouse.x - this.x;
+                const dy = mouse.y - this.y;
+                const dist = Math.sqrt(dx * dx + dy * dy);
+                
+                const angle = Math.atan2(dy, dx);
+                const sway = Math.sin(Date.now() * 0.002 + this.swayOffset) * 2;
+                
+                const pull = Math.min(dist * 0.05, 8);
+                this.speedX = Math.cos(angle + sway * 0.1) * pull;
+                this.speedY = Math.sin(angle + sway * 0.1) * pull;
+                
+                this.x += this.speedX;
+                this.y += this.speedY;
+            } 
+            // WAKE UP PHASE
+            else if (this.isWakeUp) {
+                this.y -= this.upSpeed;
+                this.x = (width / 2) + 
+                         (Math.sin(this.y * this.swayFreq + this.swayOffset) * this.swayAmp) + 
+                         (this.drift * (height - this.y) * 0.2);
+
+                if (this.radius > this.targetRadius) this.radius -= 0.15;
+                if (this.y < height * 0.25) {
+                    this.isWakeUp = false;
+                    this.speedX = this.baseSpeedX;
+                    this.speedY = this.baseSpeedY;
+                }
+            } 
+            // NORMAL ROAMING & BURST RECOVERY
+            else {
+                this.x += this.speedX;
+                this.y += this.speedY;
+
+                // Friction to slow down from burst
+                this.speedX *= 0.96;
+                this.speedY *= 0.96;
+                
+                // Lerp back to base organic movement speeds so they don't stop moving
+                this.speedX += (this.baseSpeedX - this.speedX) * 0.02;
+                this.speedY += (this.baseSpeedY - this.speedY) * 0.02;
+
+                if (this.x < -this.radius) this.x = width + this.radius;
+                if (this.x > width + this.radius) this.x = -this.radius;
+                if (this.y < -this.radius) this.y = height + this.radius;
+                if (this.y > height + this.radius) this.y = -this.radius;
+            }
+
+            this.hue += 0.1;
+
+            if (this.isGhost) {
+                this.life += this.spawnRate;
+                this.opacity = Math.sin(this.life) * 0.55;
+                if (this.life > Math.PI) {
+                    this.init(); 
+                    this.isWakeUp = false;
+                }
+            }
+        }
+
+        draw() {
+            if (this.opacity <= 0) return;
+            ctx.beginPath();
+            ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+            ctx.fillStyle = `hsla(${this.hue}, ${this.saturation}%, 40%, ${this.opacity})`;
+            ctx.fill();
+        }
+    }
+
+    function resize() {
+        width = canvas.width = window.innerWidth;
+        height = canvas.height = window.innerHeight;
+    }
+
+    function initBlobs() {
+        blobs = [];
+        ghostBlobs = [];
+
+        const burstSize = 3; 
+        const totalGroups = Math.ceil(BASE_BLOB_COUNT / burstSize);
+
+        for (let g = 0; g < totalGroups; g++) {
+            setTimeout(() => {
+                for (let i = 0; i < burstSize; i++) {
+                    if (blobs.length < BASE_BLOB_COUNT) {
+                        blobs.push(new Blob(false, true));
+                    }
+                }
+            }, g * 1600); 
+        }
+
+        setTimeout(() => {
+            for (let i = 0; i < 4; i++) {
+                ghostBlobs.push(new Blob(true, false));
+            }
+        }, 4000);
+    }
+
+    // INTERACTION LISTENERS
+    window.addEventListener('mousedown', (e) => {
+        mouse.active = true;
+        mouse.x = e.clientX;
+        mouse.y = e.clientY;
+    });
+
+    window.addEventListener('mousemove', (e) => {
+        mouse.x = e.clientX;
+        mouse.y = e.clientY;
+    });
+
+    window.addEventListener('mouseup', () => {
+        if (mouse.active) {
+            mouse.active = false;
+            blobs.forEach(b => b.burst(mouse.x, mouse.y));
+        }
+    });
+
+    // Touch Support
+    window.addEventListener('touchstart', (e) => {
+        mouse.active = true;
+        mouse.x = e.touches[0].clientX;
+        mouse.y = e.touches[0].clientY;
+    });
+
+    window.addEventListener('touchend', () => {
+        if (mouse.active) {
+            mouse.active = false;
+            blobs.forEach(b => b.burst(mouse.x, mouse.y));
+        }
+    });
+
+    function animate() {
+        ctx.clearRect(0, 0, width, height);
+        blobs.forEach(blob => { blob.update(); blob.draw(); });
+        ghostBlobs.forEach(ghost => { ghost.update(); ghost.draw(); });
+        requestAnimationFrame(animate);
+    }
+
+    window.addEventListener('resize', resize);
+    resize();
+    initBlobs();
+    animate();
+</script>
+
+</body>
+</html>
