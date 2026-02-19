@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Optimized Burst Wallpaper</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        html, body {
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background: #050508;
+        }
+
+        #canvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+            transform: translateZ(0);
+            will-change: transform;
+        }
+
+        .vignette {
+            position: fixed;
+            inset: 0;
+            pointer-events: none;
+            background: radial-gradient(ellipse at center, transparent 0%, rgba(0,0,0,0.4) 100%);
+            z-index: 1;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="canvas"></canvas>
+    <div class="vignette"></div>
+
+<script>
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d', { 
+        alpha: false,
+        desynchronized: true,
+        powerPreference: 'high-performance'
+    });
+
+    const CONFIG = {
+        BLOB_COUNT: 15,
+        GHOST_COUNT: 4,
+        MAX_HOLD_MS: 1200,
+        MAX_MULTIPLIER: 5,
+        TARGET_FPS: 60,
+        DPR: Math.min(window.devicePixelRatio || 1, 2)
+    };
+
+    let width, height;
+    let blobs = [];
+    let ghostBlobs = [];
+    let mouse = { x: -1000, y: -1000, active: false };
+    let holdStartTime = 0;
+    let lastFrameTime = 0;
+    let frameInterval = 1000 / CONFIG.TARGET_FPS;
+
+    function resize() {
+        const w = window.innerWidth;
+        const h = window.innerHeight;
+        
+        if (canvas.width !== Math.floor(w * CONFIG.DPR)) {
+            canvas.width = Math.floor(w * CONFIG.DPR);
+            canvas.height = Math.floor(h * CONFIG.DPR);
+            canvas.style.width = w + 'px';
+            canvas.style.height = h + 'px';
+            ctx.scale(CONFIG.DPR, CONFIG.DPR);
+        }
+        
+        width = w;
+        height = h;
+    }
+
+    class Blob {
+        constructor(isGhost = false) {
+            this.isGhost = isGhost;
+            this.isAttracting = false;
+            this.init();
+        }
+
+        init() {
+            this.targetRadius = Math.random() * 90 + 100;
+            this.hue = Math.random() * 360;
+            this.opacity = this.isGhost ? 0 : 0.85;
+            this.life = this.isGhost ? 0 : 1;
+            this.spawnRate = 0.003;
+            
+            // More lively base movement
+            this.baseSpeedX = (Math.random() - 0.5) * 1.5;
+            this.baseSpeedY = (Math.random() - 0.5) * 1.5;
+            this.swayOffset = Math.random() * Math.PI * 2;
+            this.swayFreq = 0.002 + Math.random() * 0.008;
+            this.swayAmp = 40 + Math.random() * 80;
+            this.noiseOffset = Math.random() * 1000;
+            
+            this.saturation = this.isGhost ? 50 : 65;
+
+            if (this.isGhost) {
+                this.radius = this.targetRadius;
+                this.x = Math.random() * width;
+                this.y = Math.random() * height;
+                this.speedX = (Math.random() - 0.5) * 0.3;
+                this.speedY = (Math.random() - 0.5) * 0.3;
+            } else {
+                // Start at center
+                this.radius = this.targetRadius * 0.3; // Start smaller
+                this.x = width / 2;
+                this.y = height / 2;
+                // Initial explosion velocity
+                const angle = Math.random() * Math.PI * 2;
+                const force = 8 + Math.random() * 12;
+                this.speedX = Math.cos(angle) * force;
+                this.speedY = Math.sin(angle) * force;
+                this.growing = true;
+            }
+        }
+
+        burst(originX, originY, multiplier = 1) {
+            this.isAttracting = false;
+            
+            const dx = this.x - originX;
+            const dy = this.y - originY;
+            const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+            
+            const force = (12 + Math.random() * 8) * multiplier;
+            this.speedX = (dx / dist) * force;
+            this.speedY = (dy / dist) * force;
+        }
+
+        update(time) {
+            if (mouse.active && !this.isGhost) {
+                this.isAttracting = true;
+                
+                const dx = mouse.x - this.x;
+                const dy = mouse.y - this.y;
+                const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+                
+                const pull = Math.min(dist * 0.02, 5);
+                const angle = Math.atan2(dy, dx);
+                const sway = Math.sin(time * 0.001 + this.swayOffset);
+                
+                this.speedX = Math.cos(angle + sway * 0.05) * pull;
+                this.speedY = Math.sin(angle + sway * 0.05) * pull;
+                
+                this.x += this.speedX;
+                this.y += this.speedY;
+            }
+            else {
+                // Independent movement - more organic
+                const timeScale = time * 0.001;
+                
+                // Perlin-ish noise using sine combinations
+                const noiseX = Math.sin(timeScale * this.swayFreq + this.noiseOffset) * 
+                              Math.cos(timeScale * this.swayFreq * 0.5 + this.swayOffset);
+                const noiseY = Math.cos(timeScale * this.swayFreq * 0.7 + this.noiseOffset) * 
+                              Math.sin(timeScale * this.swayFreq + this.swayOffset);
+                
+                // Apply base speed + noise drift
+                this.speedX += noiseX * 0.05;
+                this.speedY += noiseY * 0.05;
+                
+                // Gentle return to base wandering speed
+                const currentSpeed = Math.sqrt(this.speedX**2 + this.speedY**2);
+                if (currentSpeed > 2) {
+                    this.speedX *= 0.98;
+                    this.speedY *= 0.98;
+                }
+                
+                // Add constant gentle drift
+                this.speedX += (this.baseSpeedX - this.speedX) * 0.01;
+                this.speedY += (this.baseSpeedY - this.speedY) * 0.01;
+                
+                this.x += this.speedX;
+                this.y += this.speedY;
+                
+                // Grow to full size after spawn
+                if (this.growing && this.radius < this.targetRadius) {
+                    this.radius += 1;
+                    if (this.radius >= this.targetRadius) this.growing = false;
+                }
+
+                // Wrap around with margin
+                const margin = this.radius;
+                if (this.x < -margin) this.x = width + margin;
+                if (this.x > width + margin) this.x = -margin;
+                if (this.y < -margin) this.y = height + margin;
+                if (this.y > height + margin) this.y = -margin;
+            }
+
+            // Color cycling
+            this.hue += 0.15;
+
+            if (this.isGhost) {
+                this.life += this.spawnRate;
+                this.opacity = Math.abs(Math.sin(this.life)) * 0.4;
+                if (this.life > Math.PI) {
+                    this.init();
+                }
+            }
+        }
+
+        draw() {
+            if (this.opacity <= 0.01) return;
+            
+            const gradient = ctx.createRadialGradient(
+                this.x, this.y, 0,
+                this.x, this.y, this.radius
+            );
+            
+            gradient.addColorStop(0, `hsla(${this.hue}, ${this.saturation}%, 55%, ${this.opacity})`);
+            gradient.addColorStop(0.5, `hsla(${this.hue + 30}, ${this.saturation}%, 45%, ${this.opacity * 0.7})`);
+            gradient.addColorStop(1, `hsla(${this.hue + 60}, ${this.saturation}%, 35%, 0)`);
+            
+            ctx.fillStyle = gradient;
+            ctx.beginPath();
+            ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+            ctx.fill();
+        }
+    }
+
+    function initBlobs() {
+        blobs = [];
+        ghostBlobs = [];
+        
+        // Create all blobs at center
+        for (let i = 0; i < CONFIG.BLOB_COUNT; i++) {
+            blobs.push(new Blob(false));
+        }
+        
+        for (let i = 0; i < CONFIG.GHOST_COUNT; i++) {
+            ghostBlobs.push(new Blob(true));
+        }
+    }
+
+    function computeMultiplier(durationMs) {
+        const t = Math.min(Math.max(durationMs, 0), CONFIG.MAX_HOLD_MS) / CONFIG.MAX_HOLD_MS;
+        return 1 + (CONFIG.MAX_MULTIPLIER - 1) * (t * t);
+    }
+
+    function drawChargeIndicator(time) {
+        if (!mouse.active || !holdStartTime) return;
+
+        const duration = time - holdStartTime;
+        const percent = Math.min(duration, CONFIG.MAX_HOLD_MS) / CONFIG.MAX_HOLD_MS;
+        const radius = 30 + percent * 40;
+        const lineWidth = 4 + percent * 6;
+
+        ctx.shadowBlur = 20 * percent;
+        ctx.shadowColor = `hsla(${200 + percent * 60}, 90%, 60%, 0.8)`;
+
+        ctx.beginPath();
+        ctx.arc(mouse.x, mouse.y, radius, 0, Math.PI * 2);
+        ctx.strokeStyle = `rgba(255,255,255,0.1)`;
+        ctx.lineWidth = lineWidth;
+        ctx.stroke();
+
+        ctx.beginPath();
+        ctx.arc(mouse.x, mouse.y, radius, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * percent);
+        ctx.strokeStyle = `hsla(${200 + percent * 60}, 90%, 70%, 0.9)`;
+        ctx.lineCap = 'round';
+        ctx.stroke();
+
+        ctx.shadowBlur = 0;
+
+        ctx.font = '600 14px system-ui, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillStyle = `rgba(255,255,255,${0.7 + percent * 0.3})`;
+        ctx.fillText(Math.round(percent * 100) + '%', mouse.x, mouse.y);
+    }
+
+    function animate(currentTime) {
+        requestAnimationFrame(animate);
+        
+        if (currentTime - lastFrameTime < frameInterval) return;
+        lastFrameTime = currentTime;
+
+        ctx.fillStyle = '#050508';
+        ctx.fillRect(0, 0, width, height);
+
+        ghostBlobs.forEach(g => { g.update(currentTime); g.draw(); });
+        blobs.forEach(b => { b.update(currentTime); b.draw(); });
+        
+        drawChargeIndicator(currentTime);
+    }
+
+    function handleStart(x, y) {
+        mouse.active = true;
+        mouse.x = x;
+        mouse.y = y;
+        holdStartTime = performance.now();
+    }
+
+    function handleMove(x, y) {
+        mouse.x = x;
+        mouse.y = y;
+    }
+
+    function handleEnd() {
+        if (!mouse.active) return;
+        mouse.active = false;
+        
+        const duration = performance.now() - holdStartTime;
+        const multiplier = computeMultiplier(duration);
+        
+        blobs.forEach(b => b.burst(mouse.x, mouse.y, multiplier));
+        holdStartTime = 0;
+    }
+
+    window.addEventListener('mousedown', e => handleStart(e.clientX, e.clientY));
+    window.addEventListener('mousemove', e => handleMove(e.clientX, e.clientY));
+    window.addEventListener('mouseup', handleEnd);
+
+    window.addEventListener('touchstart', e => {
+        if (e.touches[0]) handleStart(e.touches[0].clientX, e.touches[0].clientY);
+    }, { passive: true });
+
+    window.addEventListener('touchmove', e => {
+        if (e.touches[0]) handleMove(e.touches[0].clientX, e.touches[0].clientY);
+    }, { passive: true });
+
+    window.addEventListener('touchend', handleEnd);
+    window.addEventListener('touchcancel', handleEnd);
+
+    let resizeTimeout;
+    window.addEventListener('resize', () => {
+        clearTimeout(resizeTimeout);
+        resizeTimeout = setTimeout(resize, 100);
+    });
+
+    resize();
+    initBlobs();
+    requestAnimationFrame(animate);
+</script>
+</body>
+</html>
